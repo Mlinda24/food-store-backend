@@ -1,32 +1,64 @@
-# Create your views here.
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, generics
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from .models import Restaurant, MenuItem, Category
-from .serializers import RestaurantSerializer, MenuItemSerializer, CategorySerializer
+from .serializers import (
+    RestaurantSerializer, RestaurantListSerializer,
+    MenuItemSerializer, MenuItemPublicSerializer,
+    MenuItemWithRestaurantSerializer, CategorySerializer
+)
 from accounts.permissions import IsRestaurantOwner
 
+
+class MenuItemViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Public landing page API.
+    - Not logged in → menu items only (no restaurant info)
+    - Logged in     → menu items with restaurant name
+    """
+    def get_queryset(self):
+        return MenuItem.objects.filter(is_available=True).select_related('restaurant')
+
+    def get_permissions(self):
+        return [permissions.AllowAny()]
+
+    def get_serializer_class(self):
+        if self.request.user.is_authenticated:
+            return MenuItemWithRestaurantSerializer   # includes restaurant name
+        return MenuItemPublicSerializer               # no restaurant info
+
+
 class RestaurantViewSet(viewsets.ModelViewSet):
-    queryset = Restaurant.objects.filter(is_open=True)
-    serializer_class = RestaurantSerializer
+    """
+    Authenticated users see restaurant list.
+    Clicking a restaurant shows full details + full menu.
+    """
+    def get_queryset(self):
+        return Restaurant.objects.filter(is_open=True)
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return RestaurantSerializer        # full details + full menu
+        return RestaurantListSerializer        # lightweight list
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsRestaurantOwner()]
-        return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]  # must be logged in to see restaurants
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
-class MenuItemViewSet(viewsets.ModelViewSet):
-    serializer_class = MenuItemSerializer
+
+class RestaurantMenuViewSet(viewsets.ModelViewSet):
+    """
+    Restaurant owner manages their own menu items.
+    """
+    serializer_class   = MenuItemSerializer
+    permission_classes = [IsRestaurantOwner]
 
     def get_queryset(self):
         return MenuItem.objects.filter(restaurant__owner=self.request.user)
 
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [permissions.AllowAny()]
-        return [IsRestaurantOwner()]
-
     def perform_create(self, serializer):
-        restaurant = self.request.user.restaurant
-        serializer.save(restaurant=restaurant)
+        serializer.save(restaurant=self.request.user.restaurant)
