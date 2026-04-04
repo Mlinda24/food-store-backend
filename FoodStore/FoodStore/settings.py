@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'accounts',
     'restaurants',
     'orders',
+    'drf_yasg',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
