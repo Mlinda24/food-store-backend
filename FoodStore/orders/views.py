@@ -1,140 +1,111 @@
-# orders/views.py - CORRECTED VERSION
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
 from .models import Cart, CartItem, Order, OrderItem
 from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
-from accounts.permissions import IsCustomer, IsRestaurantOwner
+from restaurants.models import MenuItem
 
+# ----------------- Cart -----------------
 class CartViewSet(viewsets.ViewSet):
-    permission_classes = [IsCustomer]
+    """
+    Handles user cart:
+    - list items
+    - add item
+    - update quantity
+    - remove item
+    """
+
+    def get_cart(self, request):
+        cart, created = Cart.objects.get_or_create(customer=request.user)
+        return cart
 
     def list(self, request):
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
-        return Response(CartSerializer(cart).data)
+        cart = self.get_cart(request)
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['post'])
-    def add(self, request):
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
-        item_id = request.data.get('menu_item')
+    def add_item(self, request):
+        cart = self.get_cart(request)
+        menu_item_id = request.data.get('menu_item')
         quantity = int(request.data.get('quantity', 1))
-        
-        # Check if cart has restaurant
-        menu_item = MenuItem.objects.get(id=item_id)
-        if cart.restaurant and cart.restaurant != menu_item.restaurant:
-            return Response(
-                {'error': 'Cart already has items from a different restaurant'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Set restaurant if not set
+        menu_item = get_object_or_404(MenuItem, id=menu_item_id)
+
+        # Update restaurant reference if empty
         if not cart.restaurant:
             cart.restaurant = menu_item.restaurant
             cart.save()
-        
-        cart_item, created = CartItem.objects.get_or_create(
-            cart=cart, 
-            menu_item_id=item_id
-        )
+
+        # Ensure same restaurant
+        if cart.restaurant != menu_item.restaurant:
+            return Response({"detail": "All items must be from the same restaurant."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        cart_item, created = CartItem.objects.get_or_create(cart=cart, menu_item=menu_item)
         if not created:
             cart_item.quantity += quantity
-            cart_item.save()
-        
-        return Response(CartSerializer(cart).data)
+        else:
+            cart_item.quantity = quantity
+        cart_item.save()
 
-    @action(detail=False, methods=['delete'])
-    def remove(self, request):
-        cart = Cart.objects.get(customer=request.user)
-        item_id = request.data.get('cart_item_id')
-        cart.items.filter(id=item_id).delete()
-        
-        # If cart becomes empty, clear restaurant
-        if not cart.items.exists():
-            cart.restaurant = None
-            cart.save()
-        
-        return Response(CartSerializer(cart).data)
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['patch'])
     def update_item(self, request):
-        cart = Cart.objects.get(customer=request.user)
-        item_id = request.data.get('cart_item_id')
-        quantity = request.data.get('quantity')
-        
+        cart = self.get_cart(request)
+        item_id = request.data.get('item_id')
+        quantity = int(request.data.get('quantity', 1))
+        cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+
         if quantity <= 0:
-            cart.items.filter(id=item_id).delete()
+            cart_item.delete()
         else:
-            cart_item = cart.items.get(id=item_id)
             cart_item.quantity = quantity
             cart_item.save()
-        
-        # If cart becomes empty, clear restaurant
-        if not cart.items.exists():
-            cart.restaurant = None
-            cart.save()
-        
-        return Response(CartSerializer(cart).data)
 
-    @action(detail=False, methods=['post'])
-    def clear(self, request):
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
-        cart.items.all().delete()
-        cart.restaurant = None
-        cart.save()
-        return Response({'detail': 'Cart cleared.'})
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
 
+    @action(detail=False, methods=['delete'])
+    def remove_item(self, request):
+        cart = self.get_cart(request)
+        item_id = request.data.get('item_id')
+        cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+        cart_item.delete()
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
+
+
+# ----------------- Order -----------------
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        user = self.request.user
-        if user.role == 'customer':
-            return Order.objects.filter(customer=user)
-        if user.role == 'restaurant':
-            return Order.objects.filter(restaurant__owner=user)
-        return Order.objects.none()
+        return Order.objects.filter(customer=self.request.user).order_by('-created')
 
     def perform_create(self, serializer):
-        # Convert cart → order
-        cart = Cart.objects.get(customer=self.request.user)
+        """
+        Create an order from the current user's cart.
+        """
+        cart = get_object_or_404(Cart, customer=self.request.user)
+        if not cart.items.exists():
+            raise serializers.ValidationError("Cart is empty.")
+
+        total_price = 0
+        order = serializer.save(customer=self.request.user, restaurant=cart.restaurant)
         
-        if not cart.restaurant:
-            raise serializers.ValidationError('Cart is empty')
-        
-        items = cart.items.select_related('menu_item')
-        total = sum(i.menu_item.price * i.quantity for i in items)
-        
-        order = serializer.save(
-            customer=self.request.user,
-            total_price=total,
-            restaurant=cart.restaurant
-        )
-        
-        for i in items:
+        for item in cart.items.all():
+            price = item.menu_item.price
             OrderItem.objects.create(
                 order=order,
-                menu_item=i.menu_item,
-                quantity=i.quantity,
-                price=i.menu_item.price
+                menu_item=item.menu_item,
+                quantity=item.quantity,
+                price=price * item.quantity
             )
-        
-        # Clear cart after order
-        cart.items.all().delete()
-        cart.restaurant = None
-        cart.save()
+            total_price += price * item.quantity
 
-    @action(detail=True, methods=['patch'], permission_classes=[IsRestaurantOwner])
-    def update_status(self, request, pk=None):
-        order = self.get_object()
-        new_status = request.data.get('status')
-        
-        valid_statuses = ['pending', 'confirmed', 'preparing', 'ready', 'cancelled']
-        if new_status not in valid_statuses:
-            return Response(
-                {'error': f'Invalid status. Must be one of: {valid_statuses}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        order.status = new_status
+        order.total_price = total_price
         order.save()
-        return Response({'status': order.status})
+        cart.items.all().delete()  # clear cart after order
