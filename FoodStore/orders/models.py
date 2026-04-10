@@ -1,51 +1,78 @@
 from django.db import models
 from django.conf import settings
-from restaurants.models import MenuItem, Restaurant
+from restaurants.models import Restaurant, MenuItem
 
 class Cart(models.Model):
-    customer   = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.SET_NULL, null=True, blank=True)
-    updated    = models.DateTimeField(auto_now=True)
+    # Temporarily allow null for migration
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='cart',
+        null=True,  # Temporary
+        blank=True  # Temporary
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Cart of {self.customer}"
+        return f"Cart for {self.user.username if self.user else 'Anonymous'}"
+
+    class Meta:
+        verbose_name = 'Cart'
+        verbose_name_plural = 'Carts'
+
 
 class CartItem(models.Model):
-    cart      = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
-    quantity  = models.PositiveIntegerField(default=1)
+    quantity = models.PositiveIntegerField(default=1)
+    added_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.quantity} x {self.menu_item.name}"
+
+    class Meta:
+        verbose_name = 'Cart Item'
+        verbose_name_plural = 'Cart Items'
+
 
 class Order(models.Model):
-    PENDING   = 'pending'
-    CONFIRMED = 'confirmed'
-    PREPARING = 'preparing'
-    READY     = 'ready'
-    CANCELLED = 'cancelled'
     STATUS_CHOICES = [
-        (PENDING,   'Pending'),
-        (CONFIRMED, 'Confirmed'),
-        (PREPARING, 'Preparing'),
-        (READY,     'Ready for Pickup'),
-        (CANCELLED, 'Cancelled'),
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('preparing', 'Preparing'),
+        ('ready', 'Ready'),
+        ('delivered', 'Delivered'),
+        ('cancelled', 'Cancelled'),
     ]
-    customer    = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    restaurant  = models.ForeignKey(Restaurant, on_delete=models.CASCADE)
-    status      = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='orders')
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, related_name='orders')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     total_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    note        = models.TextField(blank=True)
-    created     = models.DateTimeField(auto_now_add=True)
+    delivery_address = models.TextField()
+    note = models.TextField(blank=True)
+    created = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Order {self.id} by {self.customer}"
+        return f"Order #{self.id} - {self.user.username}"
+
+    class Meta:
+        verbose_name = 'Order'
+        verbose_name_plural = 'Orders'
+        ordering = ['-created']
+
 
 class OrderItem(models.Model):
-    order     = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
-    quantity  = models.PositiveIntegerField()
-    price     = models.DecimalField(max_digits=10, decimal_places=2)  # snapshot price
+    quantity = models.PositiveIntegerField()
+    price = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
         return f"{self.quantity} x {self.menu_item.name}"
+
+    class Meta:
+        verbose_name = 'Order Item'
+        verbose_name_plural = 'Order Items'

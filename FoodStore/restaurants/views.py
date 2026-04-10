@@ -73,6 +73,7 @@ class RestaurantViewSet(viewsets.ModelViewSet):
         except Restaurant.DoesNotExist:
             return Response({'detail': 'No restaurant found'}, status=status.HTTP_404_NOT_FOUND)
 
+
 # ------------------------------
 # Menu Item ViewSets
 # ------------------------------
@@ -80,11 +81,13 @@ class MenuItemViewSet(viewsets.ModelViewSet):
     queryset = MenuItem.objects.all()
     serializer_class = MenuItemSerializer
 
+
 class RestaurantMenuViewSet(viewsets.ViewSet):
     def list(self, request, restaurant_pk=None):
         menu_items = MenuItem.objects.filter(restaurant_id=restaurant_pk)
         serializer = MenuItemSerializer(menu_items, many=True)
         return Response(serializer.data)
+
 
 # ------------------------------
 # New: All Available Menu Items
