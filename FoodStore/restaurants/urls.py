@@ -1,10 +1,18 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import RestaurantViewSet, MenuItemViewSet, RestaurantMenuViewSet
+from .views import (
+    RestaurantViewSet, 
+    MenuItemViewSet, 
+    AvailableMenuItemsViewSet,
+    RestaurantMenuViewSet
+)
 
 router = DefaultRouter()
-router.register('restaurants', RestaurantViewSet,     basename='restaurant')
-router.register('menu',        MenuItemViewSet,       basename='menu')
-router.register('manage/menu', RestaurantMenuViewSet, basename='manage-menu')
+router.register(r'restaurants', RestaurantViewSet, basename='restaurant')
+router.register(r'menu-items', MenuItemViewSet, basename='menuitem')
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path('', include(router.urls)),
+    path('menu/available/', AvailableMenuItemsViewSet.as_view({'get': 'list'}), name='available-menu'),
+    path('restaurants/<int:restaurant_pk>/menu/', RestaurantMenuViewSet.as_view({'get': 'list'}), name='restaurant-menu'),
+]
